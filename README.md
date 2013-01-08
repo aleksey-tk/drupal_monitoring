@@ -1,6 +1,13 @@
 drupal_monitoring
 =================
 
-Drop-in script to monitor Drupal installation. Work in progress.
+Drop-in script to monitor Drupal 7 non-multisite installation.
 
-Contains monitoring.php script which should be put in the root of drupal installation. No multisite support for now. For all the things it checks - see in main script header.
+Contains monitoring.php script which should be put in the root of drupal installation. 
+
+Checklist:
+ * Settings.php file
+ * Mysql connection (using settings.php configuration)
+ * Syslog writing capabilities
+ * File system writing capabilities
+ * Memcached availability

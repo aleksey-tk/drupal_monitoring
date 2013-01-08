@@ -1,23 +1,30 @@
 <?php
 /**
  * @file
- * This is monitoring page for Drupal installation. (6 and 7 versions are supported)
+ * This is monitoring page for Drupal 7 installation.
  *
  * This code will test:
  * - settings.php file
  * - mysql connection (using settings.php configuration)
  * - syslog writing capabilities
  * - file system writing capabilities
+ * - Memcached availability
  * 
- * This script should be in the root directory of Drupal installation.
- *
- * Generally speaking, this script is ugly, contains repetitive code and will fail if webserver is not running. But it does its job. 
- *
- * The big plan is to rewrite this script to be more modular, but stille clean and simple, with security in mind.
+ * This script should be in the root directory of Drupal installation (near index.php)
  *
  */
 
-// Error display should be disabled
+/**
+ * Register our shutdown function so that no other shutdown functions run before this one.
+ * This shutdown function calls exit(), immediately short-circuiting any other shutdown functions,
+ * such as those registered by the devel.module for statistics.
+ */
+register_shutdown_function('status_shutdown');
+function status_shutdown() {
+  exit();
+}
+
+// Error display should be disabled. Enable it to debug this script.
 ini_set('display_errors', 0);
 
 // Root directory of Drupal installation.
@@ -36,19 +43,30 @@ define('KO_TEXT', 'KO');
 define('OK_RESULT', 'ALL OK');
 
 // KO result indicator
-define('KO_RESULT', 'KO');
+define('KO_RESULT', 'SOME KO');
 
 // Separator 
 define('SEPARATOR', '<br />');
 
-// Headers to ensure proper html output and force encoding
+/**
+ * Bootstrap Drupal. Full mode, takes some time.
+ */
+require_once DRUPAL_ROOT . '/includes/bootstrap.inc';
+drupal_bootstrap(DRUPAL_BOOTSTRAP_FULL);
+
+// No cache, please
 header('Cache-Control: max-age=0');
 header('Expires: ' . gmdate('D, d M Y H:i:s \G\M\T', time()));
+
+// Forcing UTF-8 encoding
 header('content-type: text/html; charset=utf-8');
+
 print '<!DOCTYPE html>'."\n";
 print '<html>';
 print '<head>';
 print '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">';
+
+// Page will be refreshed automatically every 300 seconds
 print '<meta http-equiv="refresh" content="300">';
 print '</head><body>';
 
@@ -59,7 +77,6 @@ $result = 0;
 $timestart = microtime(true);
 print "Configuration file exists (settings.php): ";
 if (!file_exists(DRUPAL_SETTINGS)) {
-
   print KO_TEXT;
   $result++;
 } 
@@ -73,11 +90,16 @@ print ' (' . $time_result . 's)';
 
 print SEPARATOR;
 
-// Testing MySQL connection using Drupal settings (we assume that bootstrap configuration is OK)
+// Testing MySQL connection using Drupal settings
 $timestart = microtime(true);
-print "Database connection (MySQL): ";
-if (file_exists(DRUPAL_SETTINGS)) { require_once(DRUPAL_SETTINGS); }
-if (!mysql_connect($databases['default']['default']['host'] . ':' . $databases['default']['default']['port'], $databases['default']['default']['username'], $databases['default']['default']['password'])) {
+print "Database connections is working (MySQL): ";
+
+// Querying for admin user in users table. Should always exist for installed Drupal.
+$query = db_select('users', 'u')
+  ->fields('u')
+  ->condition('u.uid', 1, '=');
+$result = $query->execute();
+if (!$account = $result->fetchAssoc()) {
   print KO_TEXT;
   $result++;
 } 
@@ -93,7 +115,7 @@ print SEPARATOR;
 
 // Testing syslog writing capabilities
 $timestart = microtime(true);
-print "Syslog writing capabilities (syslog): ";
+print "Syslog is available (syslog): ";
 if (!syslog(LOG_NOTICE, 'Status check. Supervision page.')) {
   print KO_TEXT;
   $result++;
@@ -109,8 +131,9 @@ print ' (' . $time_result . 's)';
 print SEPARATOR;
 
 // Testing file system writing capabilities
-print "File system writing capabilities: ";
-if ($test = tempnam(DRUPAL_ROOT . '/sites/default/files/', 'status_check_')) {
+$timestart = microtime(true);
+print "File system writable : ";
+if ($test = tempnam(variable_get('file_directory_path', conf_path() . '/files'), 'status_check_')) {
   print OK_TEXT;
   // Deleting test file
   unlink($test);
@@ -124,6 +147,73 @@ $time = $timeend - $timestart;
 $time_result = (float) number_format($time, 3);
 print ' (' . $time_result . 's)';
 
+print SEPARATOR;
+
+print "Memcache: ";
+$timestart = microtime(true);
+// Testing memcached
+if (isset($conf['cache_backends']) && isset($conf['memcache_servers'])) {
+  
+  // Confirm that valid path to memcache.inc is defined
+  $memcache_check = count(array_filter($conf['cache_backends'], function($path){
+    return (strrpos($path, "memcache.inc") && file_exists($path));
+  }));
+  
+  // Only continue if memcache is configured in the $conf array
+  if ($memcache_check > 0) {
+    // Select PECL memcache/memcached library to use
+    $preferred = variable_get('memcache_extension', NULL);
+    if (isset($preferred) && class_exists($preferred)) {
+      $extension = $preferred;
+    }
+    // If no extension is set, default to Memcache.
+    elseif (class_exists('Memcache')) {
+      $extension = 'Memcache';
+    }
+    elseif (class_exists('Memcached')) {
+      $extension = 'Memcached';
+    }
+    else {
+      print KO_TEXT;
+      $result++;
+    }
+    
+    // Test server connections
+    if ($extension) {
+      $memcache_errors = array();
+      foreach ($conf['memcache_servers'] as $address => $bin) {
+        list($ip, $port) = explode(':', $address);
+        if ($extension == 'Memcache') {
+          if (!memcache_connect($ip, $port)) {
+             print KO_TEXT;
+             $result++;
+          }
+        }
+        elseif ($extension == 'Memcached') {
+          $m = new Memcached();
+          $m->addServer($ip, $port);
+          if ($m->getVersion() == FALSE) {
+             print KO_TEXT;
+             $result++;
+          }
+        }
+        else {
+          print OK_TEXT;
+        }
+      }
+    }
+  }
+}
+else {
+  print KO_TEXT;
+  $result++;
+}
+$timeend = microtime(true);
+$time = $timeend - $timestart;
+$time_result = (float) number_format($time, 3);
+print ' (' . $time_result . 's)';
+
+// Ending
 print SEPARATOR . SEPARATOR;
 
 // Result display
