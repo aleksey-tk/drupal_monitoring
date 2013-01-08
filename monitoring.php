@@ -98,8 +98,8 @@ print "Database connections is working (MySQL): ";
 $query = db_select('users', 'u')
   ->fields('u')
   ->condition('u.uid', 1, '=');
-$result = $query->execute();
-if (!$account = $result->fetchAssoc()) {
+$result_query = $query->execute();
+if (!$account = $result_query->fetchAssoc()) {
   print KO_TEXT;
   $result++;
 } 
@@ -151,6 +151,7 @@ print SEPARATOR;
 
 print "Memcache: ";
 $timestart = microtime(true);
+$memcache_error = 0;
 // Testing memcached
 if (isset($conf['cache_backends']) && isset($conf['memcache_servers'])) {
   
@@ -174,8 +175,8 @@ if (isset($conf['cache_backends']) && isset($conf['memcache_servers'])) {
       $extension = 'Memcached';
     }
     else {
-      print KO_TEXT;
-      $result++;
+      print KO_TEXT; print ' (No extension)';
+      $result++; $memcache_error++;
     }
     
     // Test server connections
@@ -185,27 +186,27 @@ if (isset($conf['cache_backends']) && isset($conf['memcache_servers'])) {
         list($ip, $port) = explode(':', $address);
         if ($extension == 'Memcache') {
           if (!memcache_connect($ip, $port)) {
-             print KO_TEXT;
-             $result++;
+             print KO_TEXT; print ' (Cannot connect to Memcache)';
+             $result++; $memcache_error++;
           }
         }
         elseif ($extension == 'Memcached') {
           $m = new Memcached();
           $m->addServer($ip, $port);
           if ($m->getVersion() == FALSE) {
-             print KO_TEXT;
-             $result++;
+             print KO_TEXT; print ' (Cannot connect to Memcached)';
+             $result++; $memcache_error++;
           }
         }
-        else {
-          print OK_TEXT;
-        }
       }
+    }
+    if ($memcache_error == 0) {
+      print OK_TEXT;
     }
   }
 }
 else {
-  print KO_TEXT;
+  print KO_TEXT; print ' (Not configured)';
   $result++;
 }
 $timeend = microtime(true);
