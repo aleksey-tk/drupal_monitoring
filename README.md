@@ -1,5 +1,5 @@
-drupal_monitoring
-=================
+Drupal monitoring PHP script
+============================
 
 Drop-in script to monitor Drupal 7 non-multisite installation.
 
